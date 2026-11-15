@@ -1,0 +1,147 @@
+#!/usr/bin/env -S python3 -I
+"""Light Markdown → Telegram HTML for tg-notify (stdin → stdout). How to write a message: FORMAT.md.
+MarkdownV2 is not used: it needs escaping that generated text always breaks.
+
+Layout is enforced here, so a message reads as separate pieces even when the writer left no blank lines:
+- the first line is the title: bold, then a blank line;
+- blocks of different kinds (text, list, quote, code) are split by a blank line; a line ending in «:» or «?»
+  stays glued to the block after it, and so does a «## heading»;
+- «> …» is a quote; an ask line («**Action needed:** …», ASK_LABELS) becomes one on its own, so it always
+  stands out, and a title without a status mark gets ❓;
+- «>> …» is a quote Telegram shows collapsed (logs, long details);
+- «- »/«* » lists become «• », indented ones «◦ »; «1. » lists stay numbered; ``` fences become <pre>.
+Inline: **bold**, _italic_, ~~strike~~, `code`, [text](https://url).
+--plain: the same layout without markup, for when Telegram rejects the HTML.
+"""
+import html
+import re
+import sys
+
+PLAIN = "--plain" in sys.argv[1:]
+
+ASK_LABELS = ("Action needed", "Needs you", "Нужно от тебя")
+ASK = re.compile(r"^(> ?)?\*\*(" + "|".join(ASK_LABELS) + ")")
+STATUS_MARK = re.compile(r"^[^\w\s*#`\[]")  # the title already opens with an emoji or a symbol
+HEADING = re.compile(r"^#{1,6}\s+(.*)$")
+BULLET = re.compile(r"^(\s*)[-*•]\s+(.*)$")
+NUMBERED = re.compile(r"^\s*(\d+[.)])\s+(.*)$")
+LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
+
+
+def inline(text: str) -> str:
+    if PLAIN:
+        text = LINK.sub(r"\1: \2", text)
+        return re.sub(r"\*\*|~~|`", "", text)
+    text = html.escape(text, quote=False)
+    codes: list[str] = []
+
+    def stash(match: re.Match) -> str:  # code spans are opaque to the other rules
+        codes.append(f"<code>{match[1]}</code>")
+        return f"\x00{len(codes) - 1}\x00"
+
+    text = re.sub(r"`([^`\n]+)`", stash, text)
+    text = LINK.sub(lambda m: f'<a href="{m[2]}">{m[1]}</a>', text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
+    text = re.sub(r"(?<![\w/])_([^_\n]+?)_(?!\w)", r"<i>\1</i>", text)  # snake_case ids stay intact
+    return re.sub(r"\x00(\d+)\x00", lambda m: codes[int(m[1])], text)
+
+
+def kind(line: str) -> str:
+    if HEADING.match(line):
+        return "heading"
+    if BULLET.match(line) or NUMBERED.match(line):
+        return "list"
+    if line.startswith(">>"):
+        return "details"
+    if line.startswith(">"):
+        return "quote"
+    if ASK.match(line):
+        return "ask"
+    return "text"
+
+
+def blocks(source: str) -> list[tuple[str, list[str]]]:
+    """Consecutive lines of one kind form a block; a blank line, a heading or an ask always ends one."""
+    out: list[tuple[str, list[str]]] = []
+    lines = source.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        if line.startswith("```"):
+            end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("```")), len(lines))
+            out.append(("code", lines[i + 1 : end]))
+            i = end + 1
+            continue
+        i += 1
+        if not line.strip():
+            out.append(("blank", []))
+            continue
+        k = kind(line)
+        prev = out[-1] if out else None
+        if prev and prev[0] == k and k not in ("heading", "ask"):
+            prev[1].append(line)
+        else:
+            out.append((k, [line]))
+    return [b for b in out if b[0] != "blank"]
+
+
+def quote(lines: list[str], expandable: bool = False) -> str:
+    body = "\n".join(inline(re.sub(r"^>>?\s?", "", l)) for l in lines)
+    if PLAIN:
+        return "\n".join("│ " + l for l in body.split("\n"))
+    return f"<blockquote{' expandable' if expandable else ''}>{body}</blockquote>"
+
+
+def list_line(line: str) -> str:
+    if m := NUMBERED.match(line):
+        return f"{m[1]} {inline(m[2])}"
+    m = BULLET.match(line)
+    return f"{'    ◦' if m[1] else '•'} {inline(m[2])}"
+
+
+def render(kind_: str, lines: list[str]) -> str:
+    if kind_ == "heading":
+        text = inline(HEADING.match(lines[0])[1].strip("* "))
+        return text if PLAIN else f"<b>{text}</b>"
+    if kind_ == "list":
+        return "\n".join(list_line(l) for l in lines)
+    if kind_ in ("quote", "ask"):
+        return quote(lines)
+    if kind_ == "details":
+        return quote(lines, expandable=True)
+    if kind_ == "code":
+        body = "\n".join(lines)
+        return body if PLAIN else f"<pre>{html.escape(body, quote=False)}</pre>"
+    return "\n".join(inline(l) for l in lines)
+
+
+def main() -> None:
+    source = sys.stdin.read().strip()
+    if "\n" not in source and "\\n" in source:  # «tg-notify "a\nb"» from a shell that does not expand \n
+        source = source.replace("\\n", "\n")
+    parts = blocks(source)
+    if not parts:
+        return
+    out: list[str] = []
+    first_kind, first_lines = parts[0]
+    if first_kind in ("text", "heading"):  # the title
+        title = re.sub(r"^#+\s*", "", first_lines[0]).strip()
+        title = title.replace("**", "")  # the whole title is bold anyway («✅ **x**» would nest <b>)
+        if not STATUS_MARK.match(title) and any(ASK.match(l) for _, ls in parts for l in ls):
+            title = "❓ " + title
+        out.append(inline(title) if PLAIN else f"<b>{inline(title)}</b>")
+        parts[0] = (first_kind, first_lines[1:])
+        if not parts[0][1]:
+            parts.pop(0)
+    glue = False  # the next block sticks to the previous one with a single line break
+    for k, lines in parts:
+        piece = render(k, lines)
+        if out:
+            out.append("\n" if glue else "\n\n")
+        out.append(piece)
+        glue = k == "heading" or (k == "text" and lines[-1].rstrip().endswith((":", "?")))
+    print("".join(out))
+
+
+main()

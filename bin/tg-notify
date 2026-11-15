@@ -1,0 +1,163 @@
+#!/bin/zsh
+# tg-notify: send a message, photos or a file to your own Telegram chat through a bot.
+# How to write a message: FORMAT.md (`tg-notify --format`). Repo: README.md.
+#   tg-notify "text"   |   tg-notify <<'EOF' … EOF     light Markdown (tg-notify-render); a reply link is appended
+#   tg-notify --photos <p1> [p2 … p10] [-- "text"]   one message: the photos with the text as their caption
+#                      (stdin when no text); text over a caption's 1024 goes first and the album answers it
+#   tg-notify --photo <path> [caption]   one image, up to 10 MB
+#   tg-notify --file <path> [caption]    any file (log, PDF, video), up to 50 MB
+#   tg-notify --chat <id> [--thread <topic id>] …   another chat the bot is in, no reply link;
+#                      --thread posts into one of a forum group's topics
+#   tg-notify --setup  remember the private chat that last sent /start to the bot, then send a test
+#   tg-notify --session-link   this Claude Code session's Remote Control URL; exit 1 when not in one
+#   tg-notify --format         print FORMAT.md
+# Links never unfold into a preview card.
+# Config (chmod 600): ~/.config/tg-notify/token, chat_id; optional ~/.config/tg-notify/config (labels, see README).
+# Without config it warns and exits 0, so a routine never fails because of a notification.
+set -euo pipefail
+
+CONF=$HOME/.config/tg-notify
+
+# Light Markdown → Telegram HTML with enforced layout (title, blank lines between blocks, the ask quoted).
+# `render --plain` gives the same layout without markup, for when Telegram rejects the HTML.
+ROOT=${0:A:h:h}  # the repo: this script is symlinked into ~/.local/bin
+RENDER=$ROOT/bin/tg-notify-render
+render() { $RENDER "$@" }
+
+# Labels, overridable in $CONF/config (zsh assignments), e.g. REPLY_LABEL="Ответить в чате"
+REPLY_LABEL="Reply in chat" OPEN_LABEL="Open Claude Code" SETUP_TEXT="tg-notify connected"
+[[ -r $CONF/config ]] && source $CONF/config
+
+if [[ ${1:-} == --format ]]; then cat $ROOT/FORMAT.md; exit; fi
+
+# Reply link: the Claude Code Remote Control chat of the calling session. Its claude process carries
+# `--sdk-url …/sessions/cse_<id>`, and the chat lives at claude.ai/code/session_<id>.
+# Outside Remote Control (Desktop routines, a plain terminal) it falls back to the Code tab.
+session_url() {
+  local pid=$$ args
+  while (( pid > 1 )); do
+    args=$(ps -o args= -p $pid 2>/dev/null) || return 1
+    if [[ $args =~ '--sdk-url [^ ]*/sessions/cse_([A-Za-z0-9_-]+)' ]]; then
+      print -rn -- "https://claude.ai/code/session_$match[1]"; return 0
+    fi
+    pid=$(ps -o ppid= -p $pid | tr -d ' ')
+  done
+  return 1
+}
+reply_link() {
+  local url
+  url=$(session_url) && print -rn -- "[$REPLY_LABEL]($url)" ||
+    print -rn -- "[$OPEN_LABEL](https://claude.ai/code)"
+}
+
+# --session-link: print this session's chat URL; exit 1 outside Remote Control (used by the Stop hook)
+if [[ ${1:-} == --session-link ]]; then session_url; exit; fi
+[[ -r $CONF/token ]] || { print -u2 "tg-notify: no $CONF/token"; exit 0 }
+API="https://api.telegram.org/bot$(<$CONF/token)"
+
+if [[ ${1:-} == --setup ]]; then
+  id=$(curl -fsS --max-time 15 "$API/getUpdates" | python3 -I -c '
+import json, sys
+chats = [u["message"]["chat"] for u in json.load(sys.stdin)["result"] if "message" in u]
+print(next((c["id"] for c in reversed(chats) if c["type"] == "private"), ""))')
+  [[ -n $id ]] || { print -u2 "tg-notify: send /start to the bot first"; exit 1 }
+  print -r -- "$id" > $CONF/chat_id && chmod 600 $CONF/chat_id
+  set -- "$SETUP_TEXT"
+fi
+
+[[ -r $CONF/chat_id ]] || { print -u2 "tg-notify: run tg-notify --setup"; exit 0 }
+chat=$(<$CONF/chat_id)
+own=1
+if [[ ${1:-} == --chat ]]; then
+  [[ -n ${2:-} ]] || { print -u2 "tg-notify: --chat needs a chat id"; exit 1 }
+  chat=$2 own=0; shift 2
+fi
+typeset -a thread_form thread_url
+if [[ ${1:-} == --thread ]]; then
+  [[ ${2:-} == <-> ]] || { print -u2 "tg-notify: --thread needs a topic id"; exit 1 }
+  thread_form=(--form-string message_thread_id=$2) thread_url=(--data-urlencode message_thread_id=$2)
+  shift 2
+fi
+NO_PREVIEW='{"is_disabled":true}'
+
+# One album (or one photo) with an HTML caption; plain text if Telegram rejects the HTML.
+# $1 caption html, $2 caption plain, $3 message id to answer ('' for none), then the files.
+send_photos() {
+  local html=$1 plain=$2 reply=$3; shift 3
+  local -a extra; [[ -n $reply ]] && extra=(--form-string reply_parameters="{\"message_id\":$reply}")
+  local attempt caption parse
+  for attempt in html plain; do
+    [[ $attempt == html ]] && { caption=$html parse=HTML } || { caption=$plain parse= }
+    if (( $# == 1 )); then
+      local -a cap; [[ -n $caption ]] && cap=(--form-string caption="$caption")
+      [[ -n $caption && -n $parse ]] && cap+=(--form-string parse_mode=$parse)
+      curl -fsS --max-time 120 -o /dev/null "$API/sendPhoto" --form-string chat_id="$chat" \
+        -F "photo=@\"$1\"" $cap $extra $thread_form 2>/dev/null && return 0
+    else
+      local media; media=$(python3 -I -c '
+import json, sys
+n, cap, parse = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+items = [{"type": "photo", "media": f"attach://p{i}"} for i in range(n)]
+if cap:
+    items[0]["caption"] = cap
+    if parse: items[0]["parse_mode"] = parse
+print(json.dumps(items))' $# "$caption" "$parse")
+      local -a parts; local i=0 f
+      for f in "$@"; do parts+=(-F "p$i=@\"$f\""); (( i += 1 )); done
+      curl -fsS --max-time 180 -o /dev/null "$API/sendMediaGroup" --form-string chat_id="$chat" \
+        --form-string media="$media" $parts $extra $thread_form 2>/dev/null && return 0
+    fi
+    [[ $attempt == html ]] && print -u2 "tg-notify: HTML caption rejected, sending plain"
+  done
+  print -u2 "tg-notify: photos not sent"; return 1
+}
+
+case ${1:-} in
+  --photos)
+    shift
+    typeset -a files
+    while (( $# )) && [[ $1 != -- ]]; do files+=("$1"); shift; done
+    [[ ${1:-} == -- ]] && shift
+    (( ${#files} >= 1 && ${#files} <= 10 )) || { print -u2 "tg-notify: --photos takes 1 to 10 images"; exit 1 }
+    for f in $files; do [[ -r $f ]] || { print -u2 "tg-notify: no such file: $f"; exit 1 }; done
+    # quoted: unquoted, zsh splits $(cat) inside ${…:-…} and joins it with spaces (every line break was lost)
+    text="${1:-$(cat)}"
+    text="${text[1,3800]}"
+    (( own )) && text="$text"$'\n\n'"$(reply_link)"
+    html=$(print -r -- "$text" | render)
+    if (( ${#html} <= 1024 )); then
+      send_photos "$html" "$(print -r -- "$text" | render --plain)" "" $files
+    else
+      # Too long for a caption: the text goes first, the album answers it.
+      mid=$(curl -fsS --max-time 15 "$API/sendMessage" --data-urlencode chat_id="$chat" \
+        --data-urlencode parse_mode=HTML --data-urlencode text="$html" \
+        --data-urlencode link_preview_options="$NO_PREVIEW" $thread_url |
+        python3 -I -c 'import json, sys; print(json.load(sys.stdin)["result"]["message_id"])')
+      send_photos "" "" "$mid" $files
+    fi
+    ;;
+  --photo|--file)
+    [[ ${1} == --photo ]] && { method=sendPhoto field=photo } || { method=sendDocument field=document }
+    [[ -r ${2:-} ]] || { print -u2 "tg-notify: no such file: ${2:-}"; exit 1 }
+    caption=${3:-}
+    # --form-string: a caption starting with @ or < must stay text, not be read as a file
+    curl -fsS --max-time 120 -o /dev/null "$API/$method" --form-string chat_id="$chat" \
+      -F "$field=@\"$2\"" --form-string caption="${caption[1,1000]}" $thread_form
+    ;;
+  *)
+    # `tg-notify -- "text"` (the --photos form without photos) sent a bare «--» twice
+    [[ ${1:-} == -- ]] && shift
+    # quoted: unquoted, zsh splits $(cat) inside ${…:-…} and joins it with spaces (every line break was lost)
+    text="${1:-$(cat)}"
+    text="${text[1,3800]}"
+    (( own )) && text="$text"$'\n\n'"$(reply_link)"
+    html=$(print -r -- "$text" | render)
+    # The 4096 limit counts visible text, not tags: the source is capped above, so the HTML is never cut
+    # (a cut tag made Telegram reject it). If it is rejected anyway, the same layout goes out as plain text.
+    curl -fsS --max-time 15 -o /dev/null "$API/sendMessage" --data-urlencode chat_id="$chat" \
+      --data-urlencode parse_mode=HTML --data-urlencode text="$html" \
+      --data-urlencode link_preview_options="$NO_PREVIEW" $thread_url 2>/dev/null ||
+    { print -u2 "tg-notify: HTML rejected, sent as plain text"; curl -fsS --max-time 15 -o /dev/null "$API/sendMessage" --data-urlencode chat_id="$chat" \
+      --data-urlencode text="$(print -r -- "$text" | render --plain)" --data-urlencode link_preview_options="$NO_PREVIEW" $thread_url; }
+    ;;
+esac

@@ -1,0 +1,75 @@
+#!/usr/bin/env -S python3 -I
+"""Claude Code hook for tg-notify, one script for three events (wiring: install.sh):
+- Stop: ask Claude to send its turn summary (a final or interim result, or a question) via tg-notify. The
+  reminder carries FORMAT.md, so every session, a long-running one too, writes to the current format.
+  Claude skips trivial replies and turns where it already sent one.
+- Notification (permission prompt / elicitation) and PreToolUse(AskUserQuestion): forward the question
+  straight to Telegram, so it can be answered from the phone through the reply link tg-notify appends.
+Labels are overridable in ~/.config/tg-notify/config (see README).
+"""
+import json
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))  # the repo: this file is symlinked
+TG = os.path.join(ROOT, "bin", "tg-notify")
+CONFIG = os.path.expanduser("~/.config/tg-notify/config")
+ASKING_NOTIFICATIONS = {"permission_prompt", "elicitation_dialog"}
+
+STOP_REASON = (
+    "Turn finished. If it has a result (final or interim) or needs the user's answer, and you have not sent "
+    "a summary this turn, send one to Telegram with tg-notify, in the user's language, following the format "
+    "below. A short reply with no work behind it: send nothing. Then stop, with no new text in the chat.\n\n"
+)
+
+
+def labels() -> dict[str, str]:
+    values = {"QUESTION_TITLE": "question", "PERMISSION_TITLE": "waiting for permission"}
+    try:
+        with open(CONFIG, encoding="utf-8") as config:
+            for line in config:
+                key, sep, value = line.strip().partition("=")
+                if sep and key in values:
+                    values[key] = value.strip().strip("\"'")
+    except OSError:
+        pass
+    return values
+
+
+def project(cwd: str) -> str:
+    """Project folder name; a session worktree (<repo>/.claude/worktrees/x) reports its repo."""
+    return os.path.basename(cwd.split("/.claude/worktrees/")[0].rstrip("/")) or "Claude"
+
+
+def send(text: str) -> None:
+    # Synchronous on purpose: tg-notify finds the reply link through this process's ancestors.
+    subprocess.run([TG, text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+
+
+def main() -> None:
+    event = json.load(sys.stdin)
+    kind = event.get("hook_event_name")
+    name = project(event.get("cwd", ""))
+
+    if kind == "Stop":
+        if not event.get("stop_hook_active"):  # second stop of the same turn: let it end
+            with open(os.path.join(ROOT, "FORMAT.md"), encoding="utf-8") as spec:
+                reason = STOP_REASON + spec.read()
+            print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
+
+    elif kind == "Notification":
+        message = event.get("message", "")
+        reason = event.get("notification_type")
+        if reason in ASKING_NOTIFICATIONS or (reason is None and "permission" in message.lower()):
+            send(f"⏸ **{name}: {labels()['PERMISSION_TITLE']}**\n\n{message}")
+
+    elif kind == "PreToolUse" and event.get("tool_name") == "AskUserQuestion":
+        lines = [f"❓ **{name}: {labels()['QUESTION_TITLE']}**"]
+        for question in event.get("tool_input", {}).get("questions", []):
+            lines += ["", question.get("question", "")]  # tg-notify-render glues the options to a «?» line
+            lines += [f"- {option.get('label', '')}" for option in question.get("options", [])]
+        send("\n".join(lines))
+
+
+main()
