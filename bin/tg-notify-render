@@ -14,13 +14,18 @@ Inline: **bold**, _italic_, ~~strike~~, `code`, [text](https://url).
 --plain: the same layout without markup, for when Telegram rejects the HTML.
 """
 import html
+import os
 import re
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
+from tg_notify_config import load  # noqa: E402
+
 PLAIN = "--plain" in sys.argv[1:]
 
-ASK_LABELS = ("Action needed", "Needs you", "Нужно от тебя")
-ASK = re.compile(r"^(> ?)?\*\*(" + "|".join(ASK_LABELS) + ")")
+# The ask line: built-in labels plus ASK_LABEL from the config.
+ASK_LABELS = ("Action needed", "Needs you", "Нужно от тебя", load({"ASK_LABEL": ""})["ASK_LABEL"])
+ASK = re.compile(r"^(> ?)?\*\*(" + "|".join(re.escape(l) for l in ASK_LABELS if l) + ")")
 STATUS_MARK = re.compile(r"^[^\w\s*#`\[]")  # the title already opens with an emoji or a symbol
 HEADING = re.compile(r"^#{1,6}\s+(.*)$")
 BULLET = re.compile(r"^(\s*)[-*•]\s+(.*)$")

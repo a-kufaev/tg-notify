@@ -1,38 +1,76 @@
 #!/bin/sh
-# Link tg-notify into ~/.local/bin; with --claude also link the Claude Code hook and wire it into
-# ~/.claude/settings.json (Stop, Notification, PreToolUse:AskUserQuestion). Safe to re-run.
+# tg-notify installer. Safe to re-run: it repairs what is missing and prints what is left to do.
+#   ./install.sh               CLI into ~/.local/bin, a config, and the Claude Code hook if ~/.claude exists
+#   ./install.sh --no-claude   without the hook
+#   ./install.sh --uninstall   remove the links and the hook entries; keeps ~/.config/tg-notify
+# Everything is a symlink into this repo, so `git pull` is the whole update.
 set -eu
 root=$(cd "$(dirname "$0")" && pwd)
+bin="$HOME/.local/bin"
+conf="${TG_NOTIFY_HOME:-$HOME/.config/tg-notify}"
+hook="$HOME/.claude/hooks/telegram"
+settings="$HOME/.claude/settings.json"
+mode=${1:-install}
 
-mkdir -p "$HOME/.local/bin" "$HOME/.config/tg-notify"
-chmod 700 "$HOME/.config/tg-notify"
-for f in tg-notify tg-notify-render; do ln -sfn "$root/bin/$f" "$HOME/.local/bin/$f"; done
-echo "linked ~/.local/bin/tg-notify → $root/bin"
-
-[ "${1:-}" = --claude ] || exit 0
-mkdir -p "$HOME/.claude/hooks"
-ln -sfn "$root/hooks/claude-telegram" "$HOME/.claude/hooks/telegram"
-python3 -I - "$HOME/.claude/settings.json" "$HOME/.claude/hooks/telegram" <<'EOF'
+# Add (or with "remove", drop) the hook in settings.json for Stop, Notification, PreToolUse:AskUserQuestion.
+wire_hook() {
+  python3 -I - "$settings" "$hook" "$1" <<'EOF'
 import json, os, shutil, sys
-path, command = sys.argv[1], sys.argv[2]
+path, command, action = sys.argv[1:]
 settings = json.load(open(path)) if os.path.exists(path) else {}
 hooks = settings.setdefault("hooks", {})
-wanted = [("Stop", None), ("Notification", None), ("PreToolUse", "AskUserQuestion")]
-added = []
-for event, matcher in wanted:
+changed = False
+for event, matcher in [("Stop", None), ("Notification", None), ("PreToolUse", "AskUserQuestion")]:
     groups = hooks.setdefault(event, [])
-    if any(h.get("command") == command for g in groups for h in g.get("hooks", [])):
-        continue
-    group = {"hooks": [{"type": "command", "command": command}]}
-    if matcher:
-        group = {"matcher": matcher, **group}
-    groups.append(group)
-    added.append(event)
-if added:
+    ours = [g for g in groups if any(h.get("command") == command for h in g.get("hooks", []))]
+    if action == "remove" and ours:
+        hooks[event] = [g for g in groups if g not in ours]
+        changed = True
+    elif action == "add" and not ours:
+        group = {"hooks": [{"type": "command", "command": command}]}
+        groups.append({"matcher": matcher, **group} if matcher else group)
+        changed = True
+    if not hooks[event]:
+        del hooks[event]
+if changed:
     if os.path.exists(path):
         shutil.copy(path, path + ".bak")
     with open(path, "w") as f:
         json.dump(settings, f, indent=2, ensure_ascii=False)
         f.write("\n")
-print("hook wired: " + (", ".join(added) if added else "already in place"))
 EOF
+}
+
+if [ "$mode" = --uninstall ]; then
+  for f in "$bin/tg-notify" "$bin/tg-notify-render" "$hook"; do
+    case $(readlink "$f" 2>/dev/null) in "$root"/*) rm "$f" && echo "removed $f" ;; esac
+  done
+  [ -f "$settings" ] && wire_hook remove && echo "hook entries removed from $settings (backup: .bak)"
+  echo "kept $conf (token, chat, config); delete it by hand if you want"
+  exit 0
+fi
+
+mkdir -p "$bin" "$conf"
+chmod 700 "$conf"
+for f in tg-notify tg-notify-render; do ln -sfn "$root/bin/$f" "$bin/$f"; done
+[ -f "$conf/config" ] || { cp "$root/config.example" "$conf/config"; chmod 600 "$conf/config"; }
+if [ "$mode" != --no-claude ] && [ -d "$HOME/.claude" ]; then
+  mkdir -p "$HOME/.claude/hooks"
+  ln -sfn "$root/hooks/claude-telegram" "$hook"
+  wire_hook add
+fi
+
+# Status: what works and what is left.
+ok() { echo "  ✓ $1"; }
+todo() { echo "  ✗ $1"; left=1; }
+left=0
+echo "tg-notify ($root)"
+ok "CLI: $bin/tg-notify"
+case ":$PATH:" in *":$bin:"*) ok "$bin is on PATH" ;;
+  *) todo "add to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac
+ok "settings: $conf/config"
+if [ -L "$hook" ]; then ok "Claude Code hook: $hook (Stop, Notification, AskUserQuestion)"
+else echo "  – Claude Code hook not installed"; fi
+if [ -s "$conf/token" ] && [ -s "$conf/chat_id" ]; then ok "bot connected"
+else todo "connect the bot: tg-notify --setup"; fi
+[ $left = 0 ] && echo "Ready. Try: tg-notify '✅ **hello**'" || true

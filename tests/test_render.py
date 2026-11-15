@@ -1,13 +1,18 @@
 """Renderer checks: python3 -m unittest discover tests"""
+import os
 import pathlib
 import subprocess
+import tempfile
 import unittest
 
 RENDER = pathlib.Path(__file__).resolve().parents[1] / "bin" / "tg-notify-render"
+EMPTY_HOME = tempfile.mkdtemp()  # no config: the tests see the defaults, not yours
 
 
-def render(text: str, *flags: str) -> str:
-    return subprocess.run([RENDER, *flags], input=text, capture_output=True, text=True, check=True).stdout.strip()
+def render(text: str, *flags: str, home: str = EMPTY_HOME) -> str:
+    env = {**os.environ, "TG_NOTIFY_HOME": home}
+    run = subprocess.run([RENDER, *flags], input=text, capture_output=True, text=True, check=True, env=env)
+    return run.stdout.strip()
 
 
 class RenderTest(unittest.TestCase):
@@ -44,6 +49,11 @@ class RenderTest(unittest.TestCase):
 
     def test_plain_keeps_the_layout(self):
         self.assertEqual(render("**T**\n- `a`\n> **Action needed:** b", "--plain"), "❓ T\n\n• a\n\n│ Action needed: b")
+
+    def test_ask_label_from_config(self):
+        home = tempfile.mkdtemp()
+        pathlib.Path(home, "config").write_text('ASK_LABEL="Your move"\n')
+        self.assertIn("<blockquote><b>Your move:</b> x</blockquote>", render("T\n**Your move:** x", home=home))
 
     def test_literal_backslash_n(self):
         self.assertEqual(render(r"T\n- a"), "<b>T</b>\n\n• a")

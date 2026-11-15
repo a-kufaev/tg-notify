@@ -8,27 +8,27 @@
 #   tg-notify --file <path> [caption]    any file (log, PDF, video), up to 50 MB
 #   tg-notify --chat <id> [--thread <topic id>] …   another chat the bot is in, no reply link;
 #                      --thread posts into one of a forum group's topics
-#   tg-notify --setup  remember the private chat that last sent /start to the bot, then send a test
+#   tg-notify --setup  ask for the bot token, find your chat with the bot, send a test
 #   tg-notify --session-link   this Claude Code session's Remote Control URL; exit 1 when not in one
 #   tg-notify --format         print FORMAT.md
 # Links never unfold into a preview card.
-# Config (chmod 600): ~/.config/tg-notify/token, chat_id; optional ~/.config/tg-notify/config (labels, see README).
+# State in ~/.config/tg-notify ($TG_NOTIFY_HOME): token, chat_id (chmod 600) and config (settings, see config.example).
 # Without config it warns and exits 0, so a routine never fails because of a notification.
 set -euo pipefail
 
-CONF=$HOME/.config/tg-notify
+CONF=${TG_NOTIFY_HOME:-$HOME/.config/tg-notify}
+ROOT=${0:A:h:h}  # the repo: this script is symlinked into ~/.local/bin
 
 # Light Markdown → Telegram HTML with enforced layout (title, blank lines between blocks, the ask quoted).
 # `render --plain` gives the same layout without markup, for when Telegram rejects the HTML.
-ROOT=${0:A:h:h}  # the repo: this script is symlinked into ~/.local/bin
-RENDER=$ROOT/bin/tg-notify-render
-render() { $RENDER "$@" }
+render() { $ROOT/bin/tg-notify-render "$@" }
 
-# Labels, overridable in $CONF/config (zsh assignments), e.g. REPLY_LABEL="Ответить в чате"
-REPLY_LABEL="Reply in chat" OPEN_LABEL="Open Claude Code" SETUP_TEXT="tg-notify connected"
+# Settings: defaults here, overrides in $CONF/config (all keys: config.example).
+REPLY_LABEL="Reply in chat" OPEN_LABEL="Open Claude Code" SETUP_TEXT="✅ **tg-notify connected**"
+FORMAT_FILE=
 [[ -r $CONF/config ]] && source $CONF/config
 
-if [[ ${1:-} == --format ]]; then cat $ROOT/FORMAT.md; exit; fi
+if [[ ${1:-} == --format ]]; then cat ${FORMAT_FILE:-$ROOT/FORMAT.md}; exit; fi
 
 # Reply link: the Claude Code Remote Control chat of the calling session. Its claude process carries
 # `--sdk-url …/sessions/cse_<id>`, and the chat lives at claude.ai/code/session_<id>.
@@ -50,21 +50,34 @@ reply_link() {
     print -rn -- "[$OPEN_LABEL](https://claude.ai/code)"
 }
 
-# --session-link: print this session's chat URL; exit 1 outside Remote Control (used by the Stop hook)
+# --session-link: print this session's chat URL; exit 1 outside Remote Control
 if [[ ${1:-} == --session-link ]]; then session_url; exit; fi
-[[ -r $CONF/token ]] || { print -u2 "tg-notify: no $CONF/token"; exit 0 }
-API="https://api.telegram.org/bot$(<$CONF/token)"
 
+# --setup: ask for the bot token (unless saved), find your private chat with the bot, send a test.
 if [[ ${1:-} == --setup ]]; then
+  mkdir -p $CONF && chmod 700 $CONF
+  if [[ ! -s $CONF/token ]]; then
+    [[ -t 0 ]] || { print -u2 "tg-notify: run --setup in a terminal, or put the token into $CONF/token"; exit 1 }
+    print -n "Bot token from @BotFather: "; read -rs token; print
+    print -r -- "$token" > $CONF/token && chmod 600 $CONF/token
+  fi
+  API="https://api.telegram.org/bot$(<$CONF/token)"
+  bot=$(curl -fsS --max-time 15 "$API/getMe" | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["result"]["username"])') ||
+    { print -u2 "tg-notify: Telegram rejected the token; fix $CONF/token and run --setup again"; exit 1 }
+  if [[ -t 0 ]]; then print -n "Open t.me/$bot, press Start (or send any message), then press Enter here "; read -r; fi
   id=$(curl -fsS --max-time 15 "$API/getUpdates" | python3 -I -c '
 import json, sys
 chats = [u["message"]["chat"] for u in json.load(sys.stdin)["result"] if "message" in u]
 print(next((c["id"] for c in reversed(chats) if c["type"] == "private"), ""))')
-  [[ -n $id ]] || { print -u2 "tg-notify: send /start to the bot first"; exit 1 }
+  # Another process polling this bot (a webhook, a collector) eats the updates: stop it for setup.
+  [[ -n $id ]] || { print -u2 "tg-notify: no message from you to @$bot yet; send one and run --setup again"; exit 1 }
   print -r -- "$id" > $CONF/chat_id && chmod 600 $CONF/chat_id
+  print "chat $id saved, sending a test"
   set -- "$SETUP_TEXT"
 fi
 
+[[ -r $CONF/token ]] || { print -u2 "tg-notify: not set up, run tg-notify --setup"; exit 0 }
+API="https://api.telegram.org/bot$(<$CONF/token)"
 [[ -r $CONF/chat_id ]] || { print -u2 "tg-notify: run tg-notify --setup"; exit 0 }
 chat=$(<$CONF/chat_id)
 own=1

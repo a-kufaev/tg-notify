@@ -1,0 +1,27 @@
+# tg-notify settings: ~/.config/tg-notify/config (install.sh copies this file there once).
+# KEY="value" lines, comments on their own lines. Every key is optional: delete a line to get the default.
+# Changes apply on the next message, nothing to restart.
+
+# --- Claude Code hook --------------------------------------------------------------------------
+# Ask the agent for a Telegram summary at the end of every turn (on/off).
+# Each one costs a short extra step of the agent; turn it off to keep only forwarded questions.
+HOOK_STOP="on"
+# Forward permission prompts and AskUserQuestion questions (on/off).
+HOOK_PERMISSION="on"
+HOOK_QUESTION="on"
+# Language the agent writes summaries in.
+MESSAGE_LANGUAGE="the user's language"
+# Your own message format instead of the repo's FORMAT.md (a path; ~ works). Empty: FORMAT.md.
+FORMAT_FILE=""
+
+# --- Labels ------------------------------------------------------------------------------------
+# Title of a forwarded question / permission prompt: «❓ project: question».
+QUESTION_TITLE="question"
+PERMISSION_TITLE="waiting for permission"
+# Your ask label, quoted like the built-in «**Action needed:**».
+ASK_LABEL=""
+# Link at the end of a message: back to the agent's session, or the Claude Code page outside one.
+REPLY_LABEL="Reply in chat"
+OPEN_LABEL="Open Claude Code"
+# Test message --setup sends.
+SETUP_TEXT="✅ **tg-notify connected**"
