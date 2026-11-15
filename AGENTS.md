@@ -14,4 +14,4 @@
 - **zsh trap**: quote `"${1:-$(cat)}"`; unquoted, the stdin lines are joined with spaces.
 - **Tests**: `python3 -m unittest discover tests`. They run with an empty `TG_NOTIFY_HOME`; never let a test
   send a real message (the hook's Notification and AskUserQuestion branches do).
-- The README stays minimal: install, update, use, configure, change, uninstall. Details go to file headers.
+- The README stays minimal: install, update, use, AI agents, configure, change, uninstall. Details go to file headers.

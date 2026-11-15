@@ -52,6 +52,26 @@ tg-notify --file build.log "⚠️ **CI failed**"
 More: the header of [bin/tg-notify](bin/tg-notify). Write a message the way [FORMAT.md](FORMAT.md) says;
 the renderer adds the spacing and quotes the ask line.
 
+## AI agents
+
+**Claude Code**: `install.sh` sets it up (skip with `--no-claude`). Then, in every session:
+
+- the agent gets the message format at start and sends a summary as the last step of a turn with a result;
+- if a turn did work and sent nothing, a one-line reminder asks for it;
+- questions and permission prompts go to Telegram, with a link back to the session when it runs under
+  Remote Control, so you can answer from the phone.
+
+Turn summaries off: `HOOK_STOP="off"` in the config. Restart running sessions to pick up a new install.
+
+**Any other agent** (Codex, Cursor, Gemini CLI, Aider, …) with shell access: add this to its instructions
+file (`AGENTS.md`, `~/.codex/AGENTS.md`, `GEMINI.md`, Cursor rules):
+
+```markdown
+## Telegram
+When a task ends with a result or a question for me, send a summary with `tg-notify` as the last step.
+Run `tg-notify --format` once per session for the message format.
+```
+
 ## Configure
 
 `~/.config/tg-notify/config`. Every key is described in [config.example](config.example): summaries on or
