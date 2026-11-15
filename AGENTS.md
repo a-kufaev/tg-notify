@@ -3,7 +3,8 @@
 - **One home per fact.** The message format lives only in `FORMAT.md`; the hook puts it into the agent's
   context at SessionStart, nothing copies it. A setting is its default in code plus its entry in
   `config.example`; the README only points there.
-- **Keep the Stop reason one short line**: Claude Code and Orca show it to the user on every turn.
+- **The Stop reminder is a fallback**: the UI shows it, so it fires only when a turn made tool calls and ran no
+  tg-notify (read from the transcript), and stays one short line.
 - **English only, nothing personal in the repo**: tokens, chat ids, project names, someone's language. Those go to the
   user's `~/.config/tg-notify/config`.
 - **Config parsing**: zsh `source`s the file (`bin/tg-notify`), Python reads it via `lib/tg_notify_config.py`.

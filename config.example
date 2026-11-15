@@ -3,8 +3,8 @@
 # Changes apply on the next message, nothing to restart.
 
 # --- Claude Code hook --------------------------------------------------------------------------
-# Turn-end summaries (on/off): the format goes into the agent's context at session start, and a one-line
-# reminder ends each turn. Each summary costs the agent a short extra step.
+# Turn-end summaries (on/off): the format goes into the agent's context at session start; the agent sends a
+# summary as the last step of a turn. A one-line reminder shows only when a turn did work and sent none.
 HOOK_STOP="on"
 # Forward permission prompts and AskUserQuestion questions (on/off).
 HOOK_PERMISSION="on"

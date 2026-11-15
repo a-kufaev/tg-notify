@@ -1,7 +1,8 @@
 #!/usr/bin/env -S python3 -I
 """Claude Code hook for tg-notify, one script for all its events (wired by install.sh):
 - SessionStart: put the message format into the agent's context, quietly (startup, resume, clear, compact).
-- Stop (HOOK_STOP): a one-line reminder to send the turn summary; the UI shows it, so it stays short.
+- Stop (HOOK_STOP): a fallback. When a turn did work (tool calls) but sent no summary, a one-line reminder;
+  the UI shows it, so it fires only then and stays short.
 - Notification (HOOK_PERMISSION): forward a permission prompt to Telegram.
 - PreToolUse AskUserQuestion (HOOK_QUESTION): forward the question with its options.
 Forwarded messages carry the reply link tg-notify appends, so they can be answered from the phone.
@@ -9,6 +10,7 @@ Settings: ~/.config/tg-notify/config, all keys in config.example.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -29,12 +31,14 @@ SETTINGS = load({
     "PERMISSION_TITLE": "waiting for permission",
 })
 
-STOP_REMINDER = "Telegram summary of this turn, per the tg-notify format in your context, if it has a result."
+STOP_REMINDER = "No Telegram summary this turn: send one per the tg-notify format if the turn has a result."
+TRANSCRIPT_TAIL = 8 << 20  # bytes; one turn fits easily
+# A real send: tg-notify run on the command's first line, not the word inside a heredoc or a file edit.
+SEND = re.compile(r"^(?:.*(?:&&|;|\|\|)\s*)?(?:\S*/)?tg-notify(?:\s|$)")
 CONTEXT = """# Telegram summaries (tg-notify)
-At the end of a turn with a result (final or interim) or a question for the user, send one summary with
-tg-notify, unless you already sent one this turn. A short reply with no work behind it: send nothing. After
-sending, end the turn without new chat text. Write in {language}; the ask label is "{ask}".
-Format (`tg-notify --format` prints it again):
+In a turn with a result (final or interim) or a question for the user, send one summary with tg-notify as
+the last step before your final reply. A short reply with no work behind it: send nothing.
+Write in {language}; the ask label is "{ask}". Format (`tg-notify --format` prints it again):
 
 {format}"""
 
@@ -61,6 +65,35 @@ def context() -> str:
     return CONTEXT.format(language=SETTINGS["MESSAGE_LANGUAGE"], ask=ask, format=spec_text)
 
 
+def turn(transcript: str) -> tuple[bool, bool]:
+    """(worked, sent) for the current turn: it made a tool call; one of them ran tg-notify.
+    The turn starts at the last prompt the user typed (tool results and hook notes are not prompts)."""
+    worked = sent = False
+    try:
+        with open(transcript, "rb") as log:
+            log.seek(max(0, os.path.getsize(transcript) - TRANSCRIPT_TAIL))
+            lines = log.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return True, False  # unknown: remind
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        items = [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
+        if entry.get("type") == "user" and not entry.get("isMeta"):
+            if isinstance(content, str) or any(c.get("type") in ("text", "image") for c in items):
+                break
+        if entry.get("type") == "assistant":
+            for call in (c for c in items if c.get("type") == "tool_use"):
+                worked = True
+                command = str(call.get("input", {}).get("command", ""))
+                sent = sent or bool(SEND.match(command.split("\n", 1)[0].strip()))
+    return worked, sent
+
+
 def reply(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
@@ -74,7 +107,8 @@ def main() -> None:
         reply({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context()}})
 
     elif kind == "Stop" and enabled("HOOK_STOP"):
-        if not event.get("stop_hook_active"):  # second stop of the same turn: let it end
+        worked, sent = turn(event.get("transcript_path", ""))
+        if worked and not sent and not event.get("stop_hook_active"):  # second stop: let it end
             reply({"decision": "block", "reason": STOP_REMINDER})
 
     elif kind == "Notification" and enabled("HOOK_PERMISSION"):
