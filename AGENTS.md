@@ -9,6 +9,9 @@
   user's `~/.config/tg-notify/config`.
 - **Config parsing**: zsh `source`s the file (`bin/tg-notify`), Python reads it via `lib/tg_notify_config.py`.
   Keep it `KEY="value"` on one line. Avoid names the shell or locale use (`LANG`, `LANGUAGE`, `PATH`).
+- **Every Claude Code config folder**: install.sh wires `~/.claude`, `$CLAUDE_CONFIG_DIR` and `CLAUDE_DIRS`.
+  A hook entry is ours when its command resolves to `hooks/claude-telegram`; the checklist reads the
+  entries, not a link, so a tick means the events are really wired.
 - **Paths resolve through symlinks** (`${0:A:h:h}`, `os.path.realpath`): the scripts run from `~/.local/bin`
   and `~/.claude/hooks`, the repo is their root.
 - **zsh trap**: quote `"${1:-$(cat)}"`; unquoted, the stdin lines are joined with spaces.

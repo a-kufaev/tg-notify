@@ -62,6 +62,8 @@ the renderer adds the spacing and quotes the ask line.
   Remote Control, so you can answer from the phone.
 
 Turn summaries off: `HOOK_STOP="off"` in the config. Restart running sessions to pick up a new install.
+The hook goes into `~/.claude` and `$CLAUDE_CONFIG_DIR`; an app that keeps its own Claude Code profile
+folder goes into `CLAUDE_DIRS` in the config, so updates reach it too.
 
 **Any other agent** (Codex, Cursor, Gemini CLI, Aider, …) with shell access: add this to its instructions
 file (`AGENTS.md`, `~/.codex/AGENTS.md`, `GEMINI.md`, Cursor rules):

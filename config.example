@@ -13,6 +13,10 @@ HOOK_QUESTION="on"
 MESSAGE_LANGUAGE="the user's language"
 # Your own message format instead of the repo's FORMAT.md (a path; ~ works). Empty: FORMAT.md.
 FORMAT_FILE=""
+# More Claude Code config folders to install the hook into, colon-separated (~ works). install.sh always
+# covers ~/.claude and $CLAUDE_CONFIG_DIR; list here the profiles of apps that run Claude Code with their
+# own folder, so an update from a plain terminal reaches them too.
+CLAUDE_DIRS=""
 
 # --- Labels ------------------------------------------------------------------------------------
 # Title of a forwarded question / permission prompt: "❓ project: question".
