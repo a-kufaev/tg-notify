@@ -11,6 +11,7 @@
 #   tg-notify --setup  ask for the bot token, find your chat with the bot, send a test
 #   tg-notify --session-link   this Claude Code session's Remote Control URL; exit 1 when not in one
 #   tg-notify --format         print FORMAT.md
+#   tg-notify --update         git pull the repo and re-run install.sh
 # Links never unfold into a preview card.
 # State in ~/.config/tg-notify ($TG_NOTIFY_HOME): token, chat_id (chmod 600) and config (settings, see config.example).
 # Without config it warns and exits 0, so a routine never fails because of a notification.
@@ -29,6 +30,7 @@ FORMAT_FILE=
 [[ -r $CONF/config ]] && source $CONF/config
 
 if [[ ${1:-} == --format ]]; then cat ${FORMAT_FILE:-$ROOT/FORMAT.md}; exit; fi
+if [[ ${1:-} == --update ]]; then git -C $ROOT pull --ff-only && exec $ROOT/install.sh; fi
 
 # Reply link: the Claude Code Remote Control chat of the calling session. Its claude process carries
 # `--sdk-url …/sessions/cse_<id>`, and the chat lives at claude.ai/code/session_<id>.
@@ -158,7 +160,7 @@ case ${1:-} in
       -F "$field=@\"$2\"" --form-string caption="${caption[1,1000]}" $thread_form
     ;;
   *)
-    # `tg-notify -- "text"` (the --photos form without photos) sent a bare «--» twice
+    # `tg-notify -- "text"` (the --photos form without photos) sent a bare "--" twice
     [[ ${1:-} == -- ]] && shift
     # quoted: unquoted, zsh splits $(cat) inside ${…:-…} and joins it with spaces (every line break was lost)
     text="${1:-$(cat)}"

@@ -4,12 +4,12 @@ MarkdownV2 is not used: it needs escaping that generated text always breaks.
 
 Layout is enforced here, so a message reads as separate pieces even when the writer left no blank lines:
 - the first line is the title: bold, then a blank line;
-- blocks of different kinds (text, list, quote, code) are split by a blank line; a line ending in «:» or «?»
-  stays glued to the block after it, and so does a «## heading»;
-- «> …» is a quote; an ask line («**Action needed:** …», ASK_LABELS) becomes one on its own, so it always
+- blocks of different kinds (text, list, quote, code) are split by a blank line; a line ending in ":" or "?"
+  stays glued to the block after it, and so does a "## heading";
+- "> …" is a quote; an ask line ("**Action needed:** …", ASK_LABELS) becomes one on its own, so it always
   stands out, and a title without a status mark gets ❓;
-- «>> …» is a quote Telegram shows collapsed (logs, long details);
-- «- »/«* » lists become «• », indented ones «◦ »; «1. » lists stay numbered; ``` fences become <pre>.
+- ">> …" is a quote Telegram shows collapsed (logs, long details);
+- "- "/"* " lists become "• ", indented ones "◦ "; "1. " lists stay numbered; ``` fences become <pre>.
 Inline: **bold**, _italic_, ~~strike~~, `code`, [text](https://url).
 --plain: the same layout without markup, for when Telegram rejects the HTML.
 """
@@ -24,7 +24,7 @@ from tg_notify_config import load  # noqa: E402
 PLAIN = "--plain" in sys.argv[1:]
 
 # The ask line: built-in labels plus ASK_LABEL from the config.
-ASK_LABELS = ("Action needed", "Needs you", "Нужно от тебя", load({"ASK_LABEL": ""})["ASK_LABEL"])
+ASK_LABELS = ("Action needed", "Needs you", load({"ASK_LABEL": ""})["ASK_LABEL"])
 ASK = re.compile(r"^(> ?)?\*\*(" + "|".join(re.escape(l) for l in ASK_LABELS if l) + ")")
 STATUS_MARK = re.compile(r"^[^\w\s*#`\[]")  # the title already opens with an emoji or a symbol
 HEADING = re.compile(r"^#{1,6}\s+(.*)$")
@@ -123,7 +123,7 @@ def render(kind_: str, lines: list[str]) -> str:
 
 def main() -> None:
     source = sys.stdin.read().strip()
-    if "\n" not in source and "\\n" in source:  # «tg-notify "a\nb"» from a shell that does not expand \n
+    if "\n" not in source and "\\n" in source:  # "tg-notify "a\nb"" from a shell that does not expand \n
         source = source.replace("\\n", "\n")
     parts = blocks(source)
     if not parts:
@@ -132,7 +132,7 @@ def main() -> None:
     first_kind, first_lines = parts[0]
     if first_kind in ("text", "heading"):  # the title
         title = re.sub(r"^#+\s*", "", first_lines[0]).strip()
-        title = title.replace("**", "")  # the whole title is bold anyway («✅ **x**» would nest <b>)
+        title = title.replace("**", "")  # the whole title is bold anyway ("✅ **x**" would nest <b>)
         if not STATUS_MARK.match(title) and any(ASK.match(l) for _, ls in parts for l in ls):
             title = "❓ " + title
         out.append(inline(title) if PLAIN else f"<b>{inline(title)}</b>")

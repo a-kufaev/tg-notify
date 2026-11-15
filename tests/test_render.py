@@ -32,7 +32,7 @@ class RenderTest(unittest.TestCase):
         )
 
     def test_status_mark_is_kept(self):
-        self.assertTrue(render("⚠️ **CI red**\n> **Нужно от тебя:** look").startswith("<b>⚠️ CI red</b>"))
+        self.assertTrue(render("⚠️ **CI red**\n> **Needs you:** look").startswith("<b>⚠️ CI red</b>"))
 
     def test_details_collapse(self):
         self.assertIn("<blockquote expandable>line 1\nline 2</blockquote>", render("T\n>> line 1\n>> line 2"))

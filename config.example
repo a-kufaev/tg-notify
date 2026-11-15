@@ -3,8 +3,8 @@
 # Changes apply on the next message, nothing to restart.
 
 # --- Claude Code hook --------------------------------------------------------------------------
-# Ask the agent for a Telegram summary at the end of every turn (on/off).
-# Each one costs a short extra step of the agent; turn it off to keep only forwarded questions.
+# Turn-end summaries (on/off): the format goes into the agent's context at session start, and a one-line
+# reminder ends each turn. Each summary costs the agent a short extra step.
 HOOK_STOP="on"
 # Forward permission prompts and AskUserQuestion questions (on/off).
 HOOK_PERMISSION="on"
@@ -15,11 +15,11 @@ MESSAGE_LANGUAGE="the user's language"
 FORMAT_FILE=""
 
 # --- Labels ------------------------------------------------------------------------------------
-# Title of a forwarded question / permission prompt: «❓ project: question».
+# Title of a forwarded question / permission prompt: "❓ project: question".
 QUESTION_TITLE="question"
 PERMISSION_TITLE="waiting for permission"
-# Your ask label, quoted like the built-in «**Action needed:**».
-ASK_LABEL=""
+# Label of the ask line; the renderer quotes a line starting with it.
+ASK_LABEL="Action needed"
 # Link at the end of a message: back to the agent's session, or the Claude Code page outside one.
 REPLY_LABEL="Reply in chat"
 OPEN_LABEL="Open Claude Code"

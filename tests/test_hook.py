@@ -1,4 +1,4 @@
-"""Hook checks (Stop only: the other events send real messages)."""
+"""Hook checks for SessionStart and Stop (the other events send real messages)."""
 import json
 import os
 import pathlib
@@ -10,30 +10,40 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 HOOK = ROOT / "hooks" / "claude-telegram"
 
 
-def stop(config: str = "") -> str:
+def run(event: str, config: str = "") -> str:
     home = tempfile.mkdtemp()
     pathlib.Path(home, "config").write_text(config)
-    event = json.dumps({"hook_event_name": "Stop", "cwd": "/x/app", "stop_hook_active": False})
+    payload = json.dumps({"hook_event_name": event, "cwd": "/x/app", "stop_hook_active": False})
     env = {**os.environ, "TG_NOTIFY_HOME": home}
-    return subprocess.run([HOOK], input=event, capture_output=True, text=True, check=True, env=env).stdout
+    return subprocess.run([HOOK], input=payload, capture_output=True, text=True, check=True, env=env).stdout
 
 
-class StopHookTest(unittest.TestCase):
-    def test_blocks_once_with_the_format(self):
-        reply = json.loads(stop())
+def session_context(config: str = "") -> str:
+    return json.loads(run("SessionStart", config))["hookSpecificOutput"]["additionalContext"]
+
+
+class HookTest(unittest.TestCase):
+    def test_session_start_puts_the_format_in_context(self):
+        context = session_context()
+        self.assertIn((ROOT / "FORMAT.md").read_text(), context)
+        self.assertIn("Write in the user's language", context)
+
+    def test_stop_is_one_short_line(self):
+        reply = json.loads(run("Stop"))
         self.assertEqual(reply["decision"], "block")
-        self.assertIn("in the user's language", reply["reason"])
-        self.assertIn((ROOT / "FORMAT.md").read_text(), reply["reason"])
+        self.assertNotIn("\n", reply["reason"])
+        self.assertLess(len(reply["reason"]), 120)
 
-    def test_off(self):
-        self.assertEqual(stop('HOOK_STOP="off"\n'), "")
+    def test_off_silences_both(self):
+        self.assertEqual(run("Stop", 'HOOK_STOP="off"\n'), "")
+        self.assertEqual(run("SessionStart", 'HOOK_STOP="off"\n'), "")
 
-    def test_language_and_own_format(self):
+    def test_language_label_and_own_format(self):
         spec = pathlib.Path(tempfile.mkdtemp(), "f.md")
         spec.write_text("MY FORMAT")
-        reason = json.loads(stop(f'MESSAGE_LANGUAGE="Russian"\nFORMAT_FILE="{spec}"\n'))["reason"]
-        self.assertIn("in Russian", reason)
-        self.assertTrue(reason.endswith("MY FORMAT"))
+        context = session_context(f'MESSAGE_LANGUAGE="Russian"\nASK_LABEL="Your move"\nFORMAT_FILE="{spec}"\n')
+        self.assertIn('Write in Russian; the ask label is "Your move"', context)
+        self.assertTrue(context.endswith("MY FORMAT"))
 
 
 if __name__ == "__main__":

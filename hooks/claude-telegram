@@ -1,8 +1,7 @@
 #!/usr/bin/env -S python3 -I
-"""Claude Code hook for tg-notify, one script for three events (wired by `install.sh --claude`):
-- Stop (HOOK_STOP): ask Claude to send its turn summary (a final or interim result, or a question) via
-  tg-notify. The reminder carries the format file, so every session, a long-running one too, writes to
-  the current format. Claude skips trivial replies and turns where it already sent one.
+"""Claude Code hook for tg-notify, one script for all its events (wired by install.sh):
+- SessionStart: put the message format into the agent's context, quietly (startup, resume, clear, compact).
+- Stop (HOOK_STOP): a one-line reminder to send the turn summary; the UI shows it, so it stays short.
 - Notification (HOOK_PERMISSION): forward a permission prompt to Telegram.
 - PreToolUse AskUserQuestion (HOOK_QUESTION): forward the question with its options.
 Forwarded messages carry the reply link tg-notify appends, so they can be answered from the phone.
@@ -24,16 +23,20 @@ SETTINGS = load({
     "HOOK_PERMISSION": "on",
     "HOOK_QUESTION": "on",
     "MESSAGE_LANGUAGE": "the user's language",
+    "ASK_LABEL": "Action needed",
     "FORMAT_FILE": "",
     "QUESTION_TITLE": "question",
     "PERMISSION_TITLE": "waiting for permission",
 })
 
-STOP_REASON = (
-    "Turn finished. If it has a result (final or interim) or needs the user's answer, and you have not sent "
-    "a summary this turn, send one to Telegram with tg-notify, in {language}, following the format below. "
-    "A short reply with no work behind it: send nothing. Then stop, with no new text in the chat.\n\n"
-)
+STOP_REMINDER = "Telegram summary of this turn, per the tg-notify format in your context, if it has a result."
+CONTEXT = """# Telegram summaries (tg-notify)
+At the end of a turn with a result (final or interim) or a question for the user, send one summary with
+tg-notify, unless you already sent one this turn. A short reply with no work behind it: send nothing. After
+sending, end the turn without new chat text. Write in {language}; the ask label is "{ask}".
+Format (`tg-notify --format` prints it again):
+
+{format}"""
 
 
 def enabled(key: str) -> bool:
@@ -50,10 +53,16 @@ def send(text: str) -> None:
     subprocess.run([TG, text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
 
 
-def stop_reason() -> str:
+def context() -> str:
     path = os.path.expanduser(SETTINGS["FORMAT_FILE"]) or os.path.join(ROOT, "FORMAT.md")
     with open(path, encoding="utf-8") as spec:
-        return STOP_REASON.format(language=SETTINGS["MESSAGE_LANGUAGE"]) + spec.read()
+        spec_text = spec.read()
+    ask = SETTINGS["ASK_LABEL"] or "Action needed"
+    return CONTEXT.format(language=SETTINGS["MESSAGE_LANGUAGE"], ask=ask, format=spec_text)
+
+
+def reply(payload: dict) -> None:
+    print(json.dumps(payload, ensure_ascii=False))
 
 
 def main() -> None:
@@ -61,9 +70,12 @@ def main() -> None:
     kind = event.get("hook_event_name")
     name = project(event.get("cwd", ""))
 
-    if kind == "Stop" and enabled("HOOK_STOP"):
+    if kind == "SessionStart" and enabled("HOOK_STOP"):
+        reply({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context()}})
+
+    elif kind == "Stop" and enabled("HOOK_STOP"):
         if not event.get("stop_hook_active"):  # second stop of the same turn: let it end
-            print(json.dumps({"decision": "block", "reason": stop_reason()}, ensure_ascii=False))
+            reply({"decision": "block", "reason": STOP_REMINDER})
 
     elif kind == "Notification" and enabled("HOOK_PERMISSION"):
         message = event.get("message", "")
@@ -74,7 +86,7 @@ def main() -> None:
     elif kind == "PreToolUse" and event.get("tool_name") == "AskUserQuestion" and enabled("HOOK_QUESTION"):
         lines = [f"❓ **{name}: {SETTINGS['QUESTION_TITLE']}**"]
         for question in event.get("tool_input", {}).get("questions", []):
-            lines += ["", question.get("question", "")]  # the renderer glues the options to a «?» line
+            lines += ["", question.get("question", "")]  # the renderer glues the options to a "?" line
             lines += [f"- {option.get('label', '')}" for option in question.get("options", [])]
         send("\n".join(lines))
 

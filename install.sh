@@ -1,5 +1,6 @@
 #!/bin/sh
-# tg-notify installer. Safe to re-run: it repairs what is missing and prints what is left to do.
+# tg-notify installer. Safe to re-run (tg-notify --update does: git pull + this): it repairs what is missing
+# and prints what is left to do.
 #   ./install.sh               CLI into ~/.local/bin, a config, and the Claude Code hook if ~/.claude exists
 #   ./install.sh --no-claude   without the hook
 #   ./install.sh --uninstall   remove the links and the hook entries; keeps ~/.config/tg-notify
@@ -12,7 +13,7 @@ hook="$HOME/.claude/hooks/telegram"
 settings="$HOME/.claude/settings.json"
 mode=${1:-install}
 
-# Add (or with "remove", drop) the hook in settings.json for Stop, Notification, PreToolUse:AskUserQuestion.
+# Add (or with "remove", drop) the hook in settings.json for every event it handles.
 wire_hook() {
   python3 -I - "$settings" "$hook" "$1" <<'EOF'
 import json, os, shutil, sys
@@ -20,7 +21,7 @@ path, command, action = sys.argv[1:]
 settings = json.load(open(path)) if os.path.exists(path) else {}
 hooks = settings.setdefault("hooks", {})
 changed = False
-for event, matcher in [("Stop", None), ("Notification", None), ("PreToolUse", "AskUserQuestion")]:
+for event, matcher in [("SessionStart", None), ("Stop", None), ("Notification", None), ("PreToolUse", "AskUserQuestion")]:
     groups = hooks.setdefault(event, [])
     ours = [g for g in groups if any(h.get("command") == command for h in g.get("hooks", []))]
     if action == "remove" and ours:
@@ -69,7 +70,7 @@ ok "CLI: $bin/tg-notify"
 case ":$PATH:" in *":$bin:"*) ok "$bin is on PATH" ;;
   *) todo "add to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac
 ok "settings: $conf/config"
-if [ -L "$hook" ]; then ok "Claude Code hook: $hook (Stop, Notification, AskUserQuestion)"
+if [ -L "$hook" ]; then ok "Claude Code hook: $hook"
 else echo "  – Claude Code hook not installed"; fi
 if [ -s "$conf/token" ] && [ -s "$conf/chat_id" ]; then ok "bot connected"
 else todo "connect the bot: tg-notify --setup"; fi
